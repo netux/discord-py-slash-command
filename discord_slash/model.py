@@ -417,6 +417,8 @@ class SlashMessage(discord.Message):
         if view != MISSING:
             _resp["components"] = view.to_components() if view else []
 
+            self._state.store_view(view, self.id)
+
         await self._http.edit(_resp, self.__interaction_token, self.id, files=files)
 
         delete_after = fields.get("delete_after")

@@ -226,6 +226,10 @@ class SlashContext:
                 self.bot.loop.create_task(smsg.delete(delay=delete_after))
             if initial_message:
                 self.message = smsg
+            if view:
+                self.bot._connection.store_view(view, smsg.id)
             return smsg
         else:
+            if view:
+                self.bot._connection.store_view(view)
             return resp
