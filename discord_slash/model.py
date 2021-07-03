@@ -3,6 +3,8 @@ import discord
 from enum import IntEnum
 from contextlib import suppress
 from inspect import iscoroutinefunction
+
+from discord.utils import MISSING
 from . import http
 from . import error
 
@@ -411,6 +413,10 @@ class SlashMessage(discord.Message):
         _resp["allowed_mentions"] = allowed_mentions.to_dict() if allowed_mentions else \
             self._state.allowed_mentions.to_dict() if self._state.allowed_mentions else {}
 
+        view = fields.get("view", MISSING)
+        if view != MISSING:
+            _resp["components"] = view.to_components() if view else []
+
         await self._http.edit(_resp, self.__interaction_token, self.id, files=files)
 
         delete_after = fields.get("delete_after")
@@ -474,7 +480,7 @@ class GuildPermissionsData:
     Slash permissions data for a command in a guild.
 
     :ivar id: Command id, provided by discord.
-    :ivar guild_id: Guild id that the permissions are in. 
+    :ivar guild_id: Guild id that the permissions are in.
     :ivar permissions: List of permissions dict.
     """
     def __init__(self, id, guild_id, permissions, **kwargs):
