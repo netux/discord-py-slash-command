@@ -125,7 +125,8 @@ class SlashContext:
                    files: typing.List[discord.File] = None,
                    allowed_mentions: discord.AllowedMentions = None,
                    hidden: bool = False,
-                   delete_after: float = None) -> model.SlashMessage:
+                   delete_after: float = None,
+                   view: discord.ui.View = None) -> model.SlashMessage:
         """
         Sends response of the slash command.
 
@@ -175,7 +176,8 @@ class SlashContext:
             "tts": tts,
             "embeds": [x.to_dict() for x in embeds] if embeds else [],
             "allowed_mentions": allowed_mentions.to_dict() if allowed_mentions
-            else self.bot.allowed_mentions.to_dict() if self.bot.allowed_mentions else {}
+            else self.bot.allowed_mentions.to_dict() if self.bot.allowed_mentions else {},
+            "components": view.to_components() if view else []
         }
         if hidden:
             base["flags"] = 64
@@ -219,6 +221,10 @@ class SlashContext:
                 self.bot.loop.create_task(smsg.delete(delay=delete_after))
             if initial_message:
                 self.message = smsg
+            if view:
+                self.bot._connection.store_view(view, smsg.id)
             return smsg
         else:
+            if view:
+                self.bot._connection.store_view(view)
             return resp
