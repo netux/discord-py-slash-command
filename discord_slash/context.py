@@ -24,6 +24,7 @@ class SlashContext:
     :ivar kwargs: Dictionary of processed arguments invoked with the command.
     :ivar subcommand_name: Subcommand of the command.
     :ivar subcommand_group: Subcommand group of the command.
+    :ivar interaction: Interaction object.
     :ivar interaction_id: Interaction ID of the command message.
     :ivar command_id: ID of the command.
     :ivar bot: discord.py client.
@@ -43,25 +44,39 @@ class SlashContext:
                  _interaction: discord.Interaction,
                  _discord: typing.Union[discord.Client, commands.Bot],
                  logger):
-        self.__token = _interaction.token
+        self.interaction = _interaction
         self.message = None  # Should be set later.
         self.name = self.command = self.invoked_with = _interaction.data["name"]
         self.args = []
         self.kwargs = {}
         self.subcommand_name = self.invoked_subcommand = self.subcommand_passed = None
         self.subcommand_group = self.invoked_subcommand_group = self.subcommand_group_passed = None
-        self.interaction_id = _interaction.id
-        self.command_id = _interaction.data["id"]
         self._http = _http
         self.bot = _discord
         self._logger = logger
         self.deferred = False
         self.responded = False
         self._deferred_hidden = False  # To check if the patch to the deferred response matches
-        self.guild_id = _interaction.guild_id
-        self.author_id = _interaction.user.id
-        self.channel_id = _interaction.channel_id
-        self.author = _interaction.user
+
+    @property
+    def command_id(self):
+        return self.interaction.data["id"]
+
+    @property
+    def guild_id(self):
+        return self.interaction.guild_id
+
+    @property
+    def author_id(self):
+        return self.interaction.user.id
+
+    @property
+    def channel_id(self):
+        return self.interaction.channel_id
+
+    @property
+    def author(self):
+        return self.interaction.user
 
     @property
     def _deffered_hidden(self):
@@ -113,7 +128,7 @@ class SlashContext:
         if hidden:
             base["data"] = {"flags": 64}
             self._deferred_hidden = True
-        await self._http.post_initial_response(base, self.interaction_id, self.__token)
+        await self._http.post_initial_response(base, self.interaction.id, self.interaction.token)
         self.deferred = True
 
     async def send(self,
@@ -193,21 +208,21 @@ class SlashContext:
                         "Deferred response might not be what you set it to! (hidden / visible) "
                         "This is because it was deferred in a different state."
                     )
-                resp = await self._http.edit(base, self.__token, files=files)
+                resp = await self._http.edit(base, self.interaction.token, files=files)
                 self.deferred = False
             else:
                 json_data = {
                     "type": 4,
                     "data": base
                 }
-                await self._http.post_initial_response(json_data, self.interaction_id, self.__token)
+                await self._http.post_initial_response(json_data, self.interaction.id, self.interaction.token)
                 if not hidden:
-                    resp = await self._http.edit({}, self.__token)
+                    resp = await self._http.edit({}, self.interaction.token)
                 else:
                     resp = {}
             self.responded = True
         else:
-            resp = await self._http.post_followup(base, self.__token, files=files)
+            resp = await self._http.post_followup(base, self.interaction.token, files=files)
         if files:
             for file in files:
                 file.close()
@@ -216,7 +231,7 @@ class SlashContext:
                                       data=resp,
                                       channel=self.channel or discord.Object(id=self.channel_id),
                                       _http=self._http,
-                                      interaction_token=self.__token)
+                                      interaction_token=self.interaction.token)
             if delete_after:
                 self.bot.loop.create_task(smsg.delete(delay=delete_after))
             if initial_message:
