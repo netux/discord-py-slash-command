@@ -40,33 +40,28 @@ class SlashContext:
 
     def __init__(self,
                  _http: http.SlashCommandRequest,
-                 _json: dict,
+                 _interaction: discord.Interaction,
                  _discord: typing.Union[discord.Client, commands.Bot],
                  logger):
-        self.__token = _json["token"]
+        self.__token = _interaction.token
         self.message = None  # Should be set later.
-        self.name = self.command = self.invoked_with = _json["data"]["name"]
+        self.name = self.command = self.invoked_with = _interaction.data["name"]
         self.args = []
         self.kwargs = {}
         self.subcommand_name = self.invoked_subcommand = self.subcommand_passed = None
         self.subcommand_group = self.invoked_subcommand_group = self.subcommand_group_passed = None
-        self.interaction_id = _json["id"]
-        self.command_id = _json["data"]["id"]
+        self.interaction_id = _interaction.id
+        self.command_id = _interaction.data["id"]
         self._http = _http
         self.bot = _discord
         self._logger = logger
         self.deferred = False
         self.responded = False
         self._deferred_hidden = False  # To check if the patch to the deferred response matches
-        self.guild_id = int(_json["guild_id"]) if "guild_id" in _json.keys() else None
-        self.author_id = int(_json["member"]["user"]["id"] if "member" in _json.keys() else _json["user"]["id"])
-        self.channel_id = int(_json["channel_id"])
-        if self.guild:
-            self.author = discord.Member(data=_json["member"], state=self.bot._connection, guild=self.guild)
-        elif self.guild_id:
-            self.author = discord.User(data=_json["member"]["user"], state=self.bot._connection)
-        else:
-            self.author = discord.User(data=_json["user"], state=self.bot._connection)
+        self.guild_id = _interaction.guild_id
+        self.author_id = _interaction.user.id
+        self.channel_id = _interaction.channel_id
+        self.author = _interaction.user
 
     @property
     def _deffered_hidden(self):

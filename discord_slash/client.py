@@ -61,16 +61,17 @@ class SlashCommand:
             self._discord.loop.create_task(self.sync_all_commands(delete_from_unused_guilds))
 
         if not isinstance(client, commands.Bot) and not isinstance(client, commands.AutoShardedBot) and not override_type:
-            self.logger.warning("Detected discord.Client! It is highly recommended to use `commands.Bot`. Do not add any `on_socket_response` event.")
-            self._discord.on_socket_response = self.on_socket_response
+            self.logger.warning("Detected discord.Client! It is highly recommended to use `commands.Bot`. Do not add any `on_interaction` event.")
+            self._discord.on_interaction = self.on_interaction
             self.has_listener = False
+            self._original_discord_on_interaction = getattr(self._discord, "on_interaction", None)
         else:
             if not hasattr(self._discord, 'slash'):
                 self._discord.slash = self
             else:
                 raise error.DuplicateSlashClient("You can't have duplicate SlashCommand instances!")
 
-            self._discord.add_listener(self.on_socket_response)
+            self._discord.add_listener(self.on_interaction)
             self.has_listener = True
             default_add_function = self._discord.add_cog
 
@@ -335,7 +336,7 @@ class SlashCommand:
             for cmd in existing_cmds:
                 existing_by_name[cmd["name"]] = model.CommandData(**cmd)
 
-            if len(new_cmds) != len(existing_cmds): 
+            if len(new_cmds) != len(existing_cmds):
                 changed = True
 
             for command in new_cmds:
@@ -355,7 +356,7 @@ class SlashCommand:
                     changed=True
                     to_send.append(command)
 
-            
+
             if changed:
                 self.logger.debug(f"Detected changes on {scope if scope is not None else 'global'}, updating them")
                 existing_cmds = await self.req.put_slash_commands(slash_commands=to_send, guild_id=scope)
@@ -400,7 +401,7 @@ class SlashCommand:
                     if existing_perms_model[new_perm["id"]] != model.GuildPermissionsData(**new_perm):
                         changed = True
                         break
-            
+
             if changed:
                 self.logger.debug(f"Detected permissions changes on {scope}, updating them")
                 await self.req.update_guild_commands_permissions(scope, new_perms)
@@ -413,7 +414,7 @@ class SlashCommand:
             other_guilds = [guild.id for guild in self._discord.guilds if guild.id not in cmds["guild"]]
             # This is an extremly bad way to do this, because slash cmds can be in guilds the bot isn't in
             # But it's the only way until discord makes an endpoint to request all the guild with cmds registered.
-            
+
             for guild in other_guilds:
                 with suppress(discord.Forbidden):
                     existing = await self.req.get_all_commands(guild_id = guild)
@@ -771,11 +772,11 @@ class SlashCommand:
     def permission(self, guild_id: int, permissions: list):
         """
         Decorator that add permissions. This will set the permissions for a single guild, you can use it more than once for each command.
-        :param guild_id: ID of the guild for the permissions. 
+        :param guild_id: ID of the guild for the permissions.
         :type guild_id: int
         :param permissions: Permission requirements of the slash command. Default ``None``.
         :type permissions: dict
-        
+
         """
         def wrapper(cmd):
             if not getattr(cmd, "__permissions__", None):
@@ -873,7 +874,7 @@ class SlashCommand:
         except Exception as ex:
             await self.on_slash_command_error(ctx, ex)
 
-    async def on_socket_response(self, msg):
+    async def on_interaction(self, interaction: discord.Interaction):
         """
         This event listener is automatically registered at initialization of this class.
 
@@ -882,49 +883,44 @@ class SlashCommand:
 
         :param msg: Gateway message.
         """
-        if msg["t"] != "INTERACTION_CREATE":
-            return
+        if interaction.type in (discord.InteractionType.ping, discord.InteractionType.application_command):
+            if interaction.data["name"] in self.commands:
+                ctx = context.SlashContext(self.req, interaction, self._discord, self.logger)
+                cmd_name = interaction.data["name"]
 
-        to_use = msg["d"]
+                if cmd_name not in self.commands and cmd_name in self.subcommands:
+                    return await self.handle_subcommand(ctx, interaction)
 
-        if to_use["type"] not in (1, 2):
-            return  # to only process ack and slash-commands and exclude other interactions like buttons
+                selected_cmd = self.commands[interaction.data["name"]]
 
-        if to_use["data"]["name"] in self.commands:
+                if selected_cmd.allowed_guild_ids and ctx.guild_id not in selected_cmd.allowed_guild_ids:
+                    return
 
-            ctx = context.SlashContext(self.req, to_use, self._discord, self.logger)
-            cmd_name = to_use["data"]["name"]
+                if selected_cmd.has_subcommands and not selected_cmd.func:
+                    return await self.handle_subcommand(ctx, interaction)
 
-            if cmd_name not in self.commands and cmd_name in self.subcommands:
-                return await self.handle_subcommand(ctx, to_use)
+                if "options" in interaction.data:
+                    for x in interaction.data["options"]:
+                        if "value" not in x:
+                            return await self.handle_subcommand(ctx, interaction)
 
-            selected_cmd = self.commands[to_use["data"]["name"]]
+                # This is to temporarily fix Issue #97, that on Android device
+                # does not give option type from API.
+                temporary_auto_convert = {}
+                for x in selected_cmd.options:
+                    temporary_auto_convert[x["name"].lower()] = x["type"]
 
-            if selected_cmd.allowed_guild_ids and ctx.guild_id not in selected_cmd.allowed_guild_ids:
-                return
+                args = await self.process_options(ctx.guild, interaction.data["options"], selected_cmd.connector, temporary_auto_convert) \
+                    if "options" in interaction.data else {}
 
-            if selected_cmd.has_subcommands and not selected_cmd.func:
-                return await self.handle_subcommand(ctx, to_use)
+                self._discord.dispatch("slash_command", ctx)
 
-            if "options" in to_use["data"]:
-                for x in to_use["data"]["options"]:
-                    if "value" not in x:
-                        return await self.handle_subcommand(ctx, to_use)
+                await self.invoke_command(selected_cmd, ctx, args)
 
-            # This is to temporarily fix Issue #97, that on Android device
-            # does not give option type from API.
-            temporary_auto_convert = {}
-            for x in selected_cmd.options:
-                temporary_auto_convert[x["name"].lower()] = x["type"]
+        if hasattr(self, "_original_discord_on_interaction"):
+            self._original_discord_on_interaction(interaction)
 
-            args = await self.process_options(ctx.guild, to_use["data"]["options"], selected_cmd.connector, temporary_auto_convert) \
-                if "options" in to_use["data"] else {}
-
-            self._discord.dispatch("slash_command", ctx)
-
-            await self.invoke_command(selected_cmd, ctx, args)
-
-    async def handle_subcommand(self, ctx: context.SlashContext, data: dict):
+    async def handle_subcommand(self, ctx: context.SlashContext, interaction: discord.Interaction):
         """
         Coroutine for handling subcommand.
 
@@ -934,10 +930,11 @@ class SlashCommand:
         :param ctx: :class:`.model.SlashContext` instance.
         :param data: Gateway message.
         """
-        if data["data"]["name"] not in self.subcommands:
+
+        if interaction.data["name"] not in self.subcommands:
             return
-        base = self.subcommands[data["data"]["name"]]
-        sub = data["data"]["options"][0]
+        base = self.subcommands[interaction.data["name"]]
+        sub = interaction.data["options"][0]
         sub_name = sub["name"]
         if sub_name not in base:
             return
